@@ -1,0 +1,156 @@
+---
+title: "Instrumental Dependence and Components in St. Anthony's Chorale"
+author: "Frances Hung"
+date: "11/22/2020"
+header-includes:
+  - \usepackage{subcaption}
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,eval=FALSE)
+```
+
+\section{Introduction}
+
+MIDI files are audio files which allow listeners to play separate instrumental parts of a piece. Playing these separate instrumental parts simultaneously from different devices is a digital way of recreating a live performance. For this applied data project, I attempt to use ICA to separate three instrumental parts of a trio: clarinet, bassoon, and oboe. I first assigned an instrumental part to each of my roommates to play on their computer (after arranging them in a typical chamber group configuration). We played our assigned part on our computers simultaneously (in-sync once and out-of-sync once) while each recording the resulting audio on our phones. Taking these three recordings, I cropped and aligned them to be the same length. I apply both a standard fastICA and a more complex 3-way group ICA to the combined recordings in hopes of separating out the three distinct instrument components.
+
+Runnable code for this project can be found at 
+
+\subsection{Musical Background}
+As humans, we can differentiate between different instruments due to certain properties of these instruments. Some instruments, like the bassoon and oboe for example, have different ranges in frequencies that they can play. For instruments which have overlapping ranges, a characteristic called timbre gives them a distinctive sound. Although difficult to quantify or describe, one auditory aspect of timbre is the overtones that accompany the base note (in a sense, secondary frequencies accompanying the main frequency). This dependence of timbre on frequency combinations motivates a method which separates components of signals based on combinations of certain frequencies. 
+
+\section{Methods}
+
+\subsection{Data Collection}
+From an online MIDI collection website, I chose a trio piece (St. Anthony Chorale by Brahms) with three separately playable MIDI files, one for each instrument (clarinet, oboe, and bassoon). I then assembled my roommates and assigned each of us an instrumental part to play on our computers. While we played our parts (synced or not) simultaneously, we each recorded the resulting noise on our phones. After getting the recordings, I synced them and cut them to be the same size using Audacity. I use the three resulting trimmed, aligned recordings from a given recording session in my EDA and ICA process.
+
+
+\subsection{Pre-Processing}
+I first transform each recording from a stereo (2-channel) matrix to a mono recording. There are two matrices which I then create and attempt to perform ICA on. The first consists of simply taking the waveform vector representation of each recording and concatenating them column-wise to create a $T \times 3$ matrix (where $T$ is the number of time points in the waveform). 
+
+For the second matrix, I first get the spectrograph matrix for each recording (where each column represents one out of $F=128$ frequencies, each row a time point out of $T$ points, and each entry value the corresponding amplitude). I concatenate each row of the three recordings so for each time point, I have a corresponding $F \times 3$ matrix. Among these time points, I assume common independent components since the location of the recording devices were static and there were no dynamic changes throughout the played piece. Consequently, I am able to concatenate the $T$ matrices column-wise and use this matrix for EDA and ICA.
+
+\subsection{EDA}
+As an exploratory analysis, I take each recording and try to analyze dependencies between frequencies. Using the spectograph matrix of each recording, I perform PCA and plot the first four principal components for the recording (Figure \ref{fig:PCA}). For simplicity, only frequencies above a certain amplitude are shown in the PCA plot. 
+
+\begin{figure}[h!]
+  \centering
+  \begin{subfigure}[b]{0.49\linewidth}
+    \includegraphics[width=\linewidth]{plots/PCA_R1.png}
+    \caption{Clarinet-dominant recording PCA.}
+  \end{subfigure}
+  \begin{subfigure}[b]{0.49\linewidth}
+    \includegraphics[width=\linewidth]{plots/PCA_R2.png}
+    \caption{Oboe-dominant recording PCA.}
+  \end{subfigure}
+  \begin{subfigure}[b]{0.5\linewidth}
+    \includegraphics[width=\linewidth]{plots/PCA_R3.png}
+    \caption{Bassoon-dominant recording PCA.}
+  \end{subfigure}
+  \caption{The first four PCA components of the three recordings (together, the first four components account for around 90\% of total variation for each recording). Lighter lines indicate frequencies with higher normalized weighting within that component.}
+  \label{fig:PCA}
+\end{figure}
+
+The first principal components of each recording seem to correspond to the dominating instrument the recording device was closest to: the first recording primarily picked up the mid-range clarinet, the second the high-range oboe, and the third the low-range bassoon. Certain sound characteristics are also reflected in the components. The first component for the clarinet-heavy recording is dense in that it contains many frequencies relative to the oboe-heavy and bassoon-heavy recordings. This makes sense since clarinets have a more complex timbre (a more "nuanced" sound) than oboes and bassooons. 
+
+To look into dependence, I first look at Kendall's Tau between the strongest-amplitude frequencies in each recording (Figure \ref{fig:pairs}). For interpretation and fitting purposes, I continue to use the lower-dimensional frequency matrix containing only the strongest frequencies in for the rest of the EDA. The pairs plots for the frequencies show dependence patterns which are quite variable (Figure \ref{fig:pairs}). I attempt to fit various copulas to describe these dependency patterns, but due to dependency pattern variability, I don't find viable fits which describe the overall data well. The high frequencies in particular appear to have strangely shaped pairwise joint distributions not well described by standard copulas. The low and mid frequencies have pairwise dependence structures which at times resemble t or Clayton copulas [2], but these structures also vary and quite a few appear nonstandard.  I do not discuss copula fits further as a result. 
+
+\begin{figure}[h!]
+  \centering
+  \begin{subfigure}[b]{0.49\linewidth}
+    \includegraphics[width=\linewidth]{plots/pair_low.png}
+    \caption{Key low-frequency pair plots.}
+  \end{subfigure}
+  \begin{subfigure}[b]{0.49\linewidth}
+    \includegraphics[width=\linewidth]{plots/pairs_mid.png}
+    \caption{Key mid-frequency pair plots.}
+  \end{subfigure}
+  \begin{subfigure}[b]{0.6\linewidth}
+    \includegraphics[width=\linewidth]{plots/pairs_high.png}
+    \caption{Key high-frequency pair plots}
+  \end{subfigure}
+  \begin{subfigure}[b]{0.39\linewidth}
+    \includegraphics[width=\linewidth]{plots/kendall.png}
+    \caption{Kendall's Tau for key frequencies.}
+  \end{subfigure}
+  \caption{Pairs plots for normal-transformed frequencies along with kendall's tau.}
+  \label{fig:pairs}
+\end{figure}
+
+
+\subsection{ICA}
+I apply the fastICA algorithm to both the waveform matrix and the row-wise concatenated spectrograph matrices. Applying fastICA to the waveform matrix is similar to the example done in class, but the concatenated spectrograph matrix ICA requires further explanation. 
+
+In some applications, we may want to assume common independent components among subjects. If we use a column-wise stacked input to estimate common independent components for a series of signals, we find interpreting these common components more straightforward and informative than performing ICA separately on each signal set and observing each set of components [1]. My initial idea was to treat each time point as a subject and to get common components consisting of linear combinations of frequencies. In order to do so, I find the spectrograph matrices for each time point and stack them vertically to get a long $(TF) \times 3$ matrix. I run fastICA on this matrix.
+
+I judge the reasonability of the returned independent components by listening to them and by examining the covariance matrices for the transformed data. 
+
+\section{Results}
+
+The ICA procedure doesn't work very well on the coordinated set of recordings since the components are all dependent. Because of this, I re-record the trio and play the separate parts at the same time but out of sync in an attempt to remove dependence. This doesn't succeed in separating the parts either, even when I replace one of the traditional instruments with a much more random sound (birdsong). By comparing the covariance matrix of the original data $Y$ to the covariance matrix of the ICA-transformed data, we can see that ICA doesn't seem to be all that successful. The covariance matrices of the transformed data have variance entries which aren't relatively stronger than the variance entries of the original data in relation to the covariance entries (Figure \ref{fig:covICA}, \ref{fig:covICA_ns}).
+
+\begin{figure}[h!]
+  \centering
+  \begin{subfigure}[b]{0.32\linewidth}
+    \includegraphics[width=\linewidth]{plots/covY.png}
+  \end{subfigure}
+  \begin{subfigure}[b]{0.32\linewidth}
+    \includegraphics[width=\linewidth]{plots/covZica.png}
+  \end{subfigure}
+  \begin{subfigure}[b]{0.32\linewidth}
+    \includegraphics[width=\linewidth]{plots/cov_Zica_long.png}
+  \end{subfigure}
+  \caption{Synced: the covariance matrices of the three original recordings, the transformed data based on waveform matrix ICA, and the transformed data based on spectrograph matrix ICA.}
+  \label{fig:covICA}
+\end{figure}
+
+\begin{figure}[h!]
+  \centering
+  \begin{subfigure}[b]{0.32\linewidth}
+    \includegraphics[width=\linewidth]{plots/Y_ns.png}
+  \end{subfigure}
+  \begin{subfigure}[b]{0.32\linewidth}
+    \includegraphics[width=\linewidth]{plots/zica_ns.png}
+  \end{subfigure}
+  \begin{subfigure}[b]{0.32\linewidth}
+    \includegraphics[width=\linewidth]{plots/zica_long_ns.png}
+  \end{subfigure}
+  \caption{Unsynced: the covariance matrices of the three original recordings, the transformed data based on waveform matrix ICA, and the transformed data based on spectrograph matrix ICA.}
+  \label{fig:covICA_ns}
+\end{figure}
+
+\section{Discussion}
+
+If I could redo the data collection process, I would've simply mixed the different midi file parts differently online or via Audacity to simulate differing spatial placement of recording devices. This would've taken away the possibility of error in perfectly aligning the real-life recordings, and it would've precluded any unwanted noises (static, car engines, etc). 
+
+The more sources there are in real-life applications of ICA, the more difficult it is to get clean separation. If I had more time, I would attempt to analyze a simpler dataset: perhaps a duet instead of a trio. Even so, musical instrument parts (even when parts are not synched) are highly dependent: they are typically in the same key, around the same tempo, and have agreeable timbres. Independent components analysis is therefore not an optimal approach for identifying individual instrument parts.
+
+There are two different reasons for why ICA on the first matrix and ICA on the second matrix fail. The first ICA fails to find independent components because any underlying components are not in fact independent. The second ICA does even worse than the first (based on the covariance matrices) because in addition to assuming independent components, the time points are assumed to have common components. While these ICA methods may work for recordings with truly independent components, musical pieces don't appear to be a good application field for ICA.
+
+We can imagine a sound-space consisting of each audio observation in one of our recordings. Since each recording has a dominant instrument, MDS could allow us to approximate the audio difference between time points with a much lower-dimensional set of frequencies (hopefully corresponding to the principal instrument). MDS has already been used in sound processing, for example to analyze differences between recordings of the same piece [4].
+
+\section{Conclusion}
+
+This applied project was an attempt to use ICA to separate audio sources and quantify dependence stucture within an audio recording. I think the idea of using sets of frequencies to separate sources and analyze recordings is valid since instruments are differentiable by the human ear due to timbre. Although each waveform has a unique timbre, however, a timbre has an infinite number of possible waveforms[3]. When it comes to analyzing real-life instruments rather than computer-generated sounds (via the midis), this problem will likely be exacerbated.
+
+Even a simple PCA in this case can rudimentarily identify recordings corresponding to different instruments: the first component of each recording reflects the dominant instrument well. From this observation and this project in general, I conjecture that clustering similar-sounding recordings is a simpler and more acheivable task than separating signals into sources (which is one reason why MDS may be require more careful reasoning to extend to a signal separation task).
+
+In order to effectively decompose the trio recording into instrumental parts, methods other than ICA are needed due to the dependence between parts at all time points. A future potential direction in this source separation problem may be using other unsupervised methods like MDS with the above caveat in mind.
+
+\newpage
+
+\section{References}
+
+[1] A. Hyvarinen, “Independent component analysis: recent advances”, Philo-sophical Transactions of the Royal Society A, vol. 371, 201
+
+[2] B. Chang, "Copula: A Very Short Introduction", Bo's Blog. May 8, 2019. https://bochang.me/blog/posts/copula/.
+
+[3] S. Smith, "The Scientists and Engineer's Guide to Digital Signal Processing", Chapter 22: Audio Processing. 1997.
+http://www.dspguide.com/ch22/2.htm
+
+[4] A. Yanchenko & P. Hoff, "Hierarchical Multidimensional Scaling for the Comparison of Musical Performance Styles", 2020.
+
+

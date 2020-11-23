@@ -1,0 +1,245 @@
+---
+title: "Code"
+author: "Frances"
+date: "11/22/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE)
+library(audio)
+library(signal)
+library(fastICA)
+library(tidyverse)
+library(dtw)
+library(reshape2)
+library(grid)
+library(gridExtra)
+```
+
+\section{Appendix}
+```{r cars}
+adat1 <- audio::load.wave("clarinettrim.wav")
+adat2 <- audio::load.wave("oboetrim.wav")
+adat3 <- audio::load.wave("bassoontrim.wav")
+```
+
+We first transform the stereo signals into mono:
+```{r}
+y1 <- as.audioSample(adat1[1,]+adat1[2,])
+y2 <- as.audioSample(adat2[1,]+adat2[2,])
+y3 <- as.audioSample(adat3[1,]+adat3[2,])
+```
+
+We cut silences off the beginnings of the tracks:
+```{r}
+s1<-min(which(y1!=0))
+s2<-min(which(y2!=0))
+s3<-min(which(y3!=0))
+```
+
+```{r}
+# play(y1[s1:(s1+100000)])
+# play(y2[s2:(s2+100000)])
+# play(y3[s3:(s3+100000)])
+```
+
+```{r}
+y1<-y1[s1:length(y1)]
+y2<-y2[s2:length(y2)]
+y3<-y3[s3:length(y3)]
+```
+
+\subsection{Spectrograph Matrices}
+I write a function which takes a waveform vector (i.e. one recording) and outputs a spectrograph matrix of time (rows) vs. frequencies (columns).
+
+```{r}
+freq_amp <- function(y,shift) {
+  sft<-signal::specgram(y, n = 256, Fs = attributes(y)$rate )
+  A<-t(Mod( sft$S ))
+  colnames(A) <- round(sft$f)
+  rownames(A) <- round(sft$t, 2)
+  colnames(A) <- round(sft$f)
+  rownames(A) <- round(sft$t, 2)
+  #removing zero-valued rows
+  #A <- A[-(1:shift),]
+  return(A)
+}
+```
+
+```{r}
+A1 <- freq_amp(y1,0)
+A2 <- freq_amp(y2,0)
+A3 <- freq_amp(y3,0)
+
+```
+
+\subsection{PCA}
+
+We take the time (rows) by frequency (columns) matrix of one recording and and find its eigendecomposition. The 128 eigenvectors represent, in decreasing order of importance, orthogonal axes of maximal variation describing the recording over all of the time points. The first four components for each recording make up roughly 90\% of all variation; we plot these components for the three recordings below.
+
+```{r}
+eigen_decomp <- function(A) {
+S <-t(A)%*%A
+eS <- eigen(S)
+V <- eS$vec; rownames(V) <- colnames(A)
+l <-eS$val
+
+return(list(V,l))
+}
+
+l1<-eigen_decomp(A1)[[2]]
+l2<-eigen_decomp(A2)[[2]]
+l3<-eigen_decomp(A3)[[2]]
+
+V1<-eigen_decomp(A1)[[1]]
+V2<-eigen_decomp(A2)[[1]]
+V3<-eigen_decomp(A3)[[1]]
+
+(cumsum(l1)/sum(l1))[1:10]
+(cumsum(l2)/sum(l2))[1:10]
+(cumsum(l3)/sum(l3))[1:10]
+```
+
+```{r}
+plot_freqs <- function(V1) {
+  
+V1_df <- cbind(rownames(V1) %>% as.numeric(),V1)
+
+freqs1 <- V1_df[abs(V1_df[,2])>=0.05,1] %>% as.vector()
+freqs2 <- V1_df[abs(V1_df[,3])>=0.05,1] %>% as.vector()
+freqs3 <- V1_df[abs(V1_df[,4])>=0.05,1] %>% as.vector()
+freqs4 <- V1_df[abs(V1_df[,5])>=0.05,1] %>% as.vector()
+
+maxfreq<-max(freqs1,freqs2,freqs3)
+
+p1<-ggplot(V1_df[V1_df[,1] %in% freqs1,] %>% as.data.frame(),aes(y=V1))+
+  geom_hline(aes(yintercept=freqs1,color=scale(abs(V2),center = FALSE),size=2)) +
+  labs(color="Amplitude",y="Frequency") +
+  guides(size=FALSE,color=FALSE)+
+  ylim(0,maxfreq)
+
+p2<-ggplot(V1_df[V1_df[,1] %in% freqs2,] %>% as.data.frame(),aes(y=V1))+
+  geom_hline(aes(yintercept=freqs2,color=scale(abs(V3),center=FALSE),size=2)) +
+  labs(color="Amplitude",y="Frequency") +
+  guides(size=FALSE,color=FALSE) +
+  ylim(0,maxfreq)
+
+p3<-ggplot(V1_df[V1_df[,1] %in% freqs3,] %>% as.data.frame(),aes(y=V1))+
+  geom_hline(aes(yintercept=freqs3,color=scale(abs(V4),center=FALSE),size=2)) +
+  labs(color="Amplitude",y="Frequency") +
+  guides(size=FALSE,color=FALSE)+
+  ylim(0,maxfreq)
+
+p4<-ggplot(V1_df[V1_df[,1] %in% freqs4,] %>% as.data.frame(),aes(y=V1))+
+  geom_hline(aes(yintercept=freqs4,color=scale(abs(V5),center=FALSE),size=2)) +
+  labs(color="Amplitude",y="Frequency") +
+  guides(size=FALSE)+
+  ylim(0,maxfreq)
+
+freq_plots <- grid.arrange(p1,p2,p3,p4,nrow=1,ncol=4)
+
+return(freq_plots)
+
+}
+
+plot_freqs(V1)
+plot_freqs(V2)
+plot_freqs(V3)
+```
+
+
+\subsection{Dependence: Kendall's Tau and Copula}
+
+To look at dependence between frequencies, I first isolate the frequencies with the highest median amplitudes in the recording and take 1000 random samples from the timepoint observations. I then calculate Kendall's Tau as a transformation-invariant measure of correlation between the frequencies and plot.
+
+```{r}
+#decide which columns (frequencies) to keep
+keep <- function(column) {
+  return(median(column)>0.15)
+}
+
+sigA1<-A1 %>% as.data.frame() %>% select_if(keep) %>% 
+  sample_n(1000)
+
+kendall_A1_samps<-cor(sigA1,method="kendall")
+
+reshape::melt(kendall_A1_samps) %>%
+  ggplot(aes(x=X1,y=X2,fill=value)) + geom_tile()
+```
+
+
+For visualization purposes, I plot the pairs plot for the sampled high-amplitude frequencies. I plot the joint pairwise distributions for the lower-frequency, mid-frequency, and high-frequency frequencies separately with overlap.
+
+```{r}
+zscores <- function(y) {qnorm(rank(y)/(length(y)+1))}
+pairs(apply(sigA1[,1:6],2,zscores))
+pairs(apply(sigA1[,4:10],2,zscores))
+pairs(apply(sigA1[,7:13],2,zscores))
+
+```
+
+
+\subsection{ICA: Wavelength Matrices}
+
+We perform fastICA on the combined recordings (wavelength matrices):
+
+```{r}
+cutoff <-min(length(y1),length(y2),length(y3))
+Y <-cbind(y1[1:cutoff],y2[1:cutoff],y3[1:cutoff])
+A <- t(fastICA::fastICA(Y,3)$A)
+cov(Y)
+```
+
+```{r}
+Zica <- Y %*% solve(A)
+cov(Zica)
+```
+
+We can visualize the covariance matrices to see if ICA has aided us in recovering independent components:
+```{r}
+covY <- cov(Y) %>% reshape::melt()  %>%
+  ggplot(aes(x=(X1),y=X2,fill=value))+geom_tile()+
+  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red')
+
+covZica<- cov(Zica) %>% reshape::melt()  %>%
+  ggplot(aes(x=(X1),y=X2,fill=value))+geom_tile() +
+  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red')
+```
+
+\subsection{Concatenated Spectrograph Matrices}
+
+
+I take the spectrograph matrices (one for each recording) and concatenate the rows belonging to the same time point. Concretely,
+I row-bind the three corresponding recording rows for each time point and transpose to get a combined $F \times 3$ frequency matrix for each time point. I then row-bind all of these matrices together.
+
+```{r}
+mats <- NULL
+for (i in 1:nrow(A1)) {
+  if (i %% 500==0) {
+    print(i)
+  }
+  mat <- matrix(data=c(A1[i,],A2[i,],A3[i,]),ncol=3)
+  mats <- rbind(mats,mat)
+}
+
+```
+
+I run fastICA on this final matrix and visualize the covariance matrix of the transformed data.
+
+```{r}
+A_long <- t(fastICA::fastICA(mats,3)$A)
+Zica_long <- Y %*% solve(A_long)
+
+cov(Zica_long)
+
+covY_long <- cov(Y) %>% reshape::melt()  %>%
+  ggplot(aes(x=(X1),y=X2,fill=value))+geom_tile()+
+  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red')
+
+covZica_long <- cov(Zica_long) %>% reshape::melt()  %>%
+  ggplot(aes(x=(X1),y=X2,fill=value))+geom_tile() +
+  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red')
+```
